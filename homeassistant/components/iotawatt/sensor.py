@@ -2,7 +2,6 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-import logging
 
 from iotawattpy.sensor import Sensor
 
@@ -31,7 +30,7 @@ from homeassistant.util import dt as dt_util
 from .const import VOLT_AMPERE_REACTIVE, VOLT_AMPERE_REACTIVE_HOURS
 from .coordinator import IotawattConfigEntry, IotawattUpdater
 
-_LOGGER = logging.getLogger(__name__)
+PARALLEL_UPDATES = 0
 
 
 @dataclass(frozen=True)
@@ -144,7 +143,7 @@ async def async_setup_entry(
         ]
         async_add_entities(entities)
 
-    coordinator.async_add_listener(new_data_received)
+    config_entry.async_on_unload(coordinator.async_add_listener(new_data_received))
 
 
 class IotaWattSensor(CoordinatorEntity[IotawattUpdater], SensorEntity):

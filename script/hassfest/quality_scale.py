@@ -488,7 +488,6 @@ INTEGRATIONS_WITHOUT_QUALITY_SCALE_FILE = [
     "intellifire",
     "intesishome",
     "ios",
-    "iotawatt",
     "iotty",
     "iperf3",
     "ipma",

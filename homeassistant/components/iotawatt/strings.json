@@ -11,6 +11,10 @@
           "password": "[%key:common::config_flow::data::password%]",
           "username": "[%key:common::config_flow::data::username%]"
         },
+        "data_description": {
+          "password": "The password for the IoTaWatt device.",
+          "username": "The username for the IoTaWatt device."
+        },
         "description": "The IoTawatt device requires authentication. Please enter the username and password and select the Submit button."
       },
       "user": {

@@ -9,7 +9,6 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import httpx_client
 
 from .const import CONNECTION_ERRORS, DOMAIN
@@ -64,6 +63,8 @@ class IOTaWattConfigFlow(ConfigFlow, domain=DOMAIN):
         if not user_input:
             return self.async_show_form(step_id="user", data_schema=schema)
 
+        self._async_abort_entries_match({CONF_HOST: user_input[CONF_HOST]})
+
         if not (errors := await validate_input(self.hass, user_input)):
             return self.async_create_entry(title=user_input[CONF_HOST], data=user_input)
 
@@ -101,11 +102,3 @@ class IOTaWattConfigFlow(ConfigFlow, domain=DOMAIN):
             )
 
         return self.async_create_entry(title=data[CONF_HOST], data=data)
-
-
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
-
-
-class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""

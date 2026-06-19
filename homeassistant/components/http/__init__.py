@@ -413,6 +413,7 @@ class HomeAssistantHTTP:
         self.supervisor_unix_socket_path = supervisor_unix_socket_path
         self.runner: web.AppRunner | None = None
         self.site: HomeAssistantTCPSite | None = None
+        self._legacy_redirect_runner: web.AppRunner | None = None
         self.supervisor_site: HomeAssistantUnixSite | None = None
         self.context: ssl.SSLContext | None = None
 
@@ -444,6 +445,21 @@ class HomeAssistantHTTP:
 
         setup_headers(self.app, use_x_frame_options)
         setup_cors(self.app, cors_origins)
+
+        # HACK (landingpage#205): when on port 80, echo Origin on every
+        # response. A cross-origin fetch that follows the 8123 -> 80 redirect
+        # stays in CORS mode, so the final port 80 response also needs CORS
+        # headers, not just the 302 from the legacy port.
+        if self.server_port == 80:
+
+            async def _add_blanket_cors(
+                request: web.Request, response: web.StreamResponse
+            ) -> None:
+                if origin := request.headers.get("Origin"):
+                    response.headers["Access-Control-Allow-Origin"] = origin
+                    response.headers["Access-Control-Allow-Credentials"] = "true"
+
+            self.app.on_response_prepare.append(_add_blanket_cors)
 
         if self.ssl_certificate:
             self.context = await self.hass.async_add_executor_job(
@@ -690,8 +706,75 @@ class HomeAssistantHTTP:
 
         _LOGGER.info("Now listening on port %d", self.server_port)
 
+        # HACK (landingpage#205): when serving on port 80, also listen on the
+        # legacy port 8123 and 302-redirect everything to port 80 for backwards
+        # compat with already-flashed hardware. Lets us test the frontend
+        # full-page refresh logic across the redirect.
+        if self.server_port == 80:
+            await self._start_legacy_redirect()
+
+    async def _start_legacy_redirect(self) -> None:
+        """Start a 302 redirect server on legacy port 8123 -> port 80."""
+
+        async def _redirect(request: web.Request) -> web.StreamResponse:
+            # Cross-origin (8123 -> 80) redirect: the browser only follows it
+            # if the redirect response itself carries CORS headers.
+            origin = request.headers.get("Origin", "*")
+            headers = {
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Credentials": "true",
+            }
+            if request.method == "OPTIONS":
+                headers["Access-Control-Allow-Methods"] = "*"
+                headers["Access-Control-Allow-Headers"] = request.headers.get(
+                    "Access-Control-Request-Headers", "*"
+                )
+                return web.Response(status=200, headers=headers)
+            raise web.HTTPFound(request.url.with_port(80), headers=headers)
+
+        redirect_app = web.Application()
+        redirect_app.router.add_route("*", "/{path:.*}", _redirect)
+        self._legacy_redirect_runner = web.AppRunner(redirect_app)
+        await self._legacy_redirect_runner.setup()
+        site = HomeAssistantTCPSite(
+            self._legacy_redirect_runner, self.server_host, 8123
+        )
+        try:
+            await site.start()
+        except OSError as error:
+            _LOGGER.error("Failed to start legacy redirect server on 8123: %s", error)
+            return
+
+        _LOGGER.info("Now redirecting legacy port 8123 to port 80")
+
+        # Once onboarding is complete the legacy port is no longer needed, so
+        # free it. async_add_listener no-ops if onboarding isn't loaded yet,
+        # so register it once the onboarding component is available.
+        async def _register_onboarding_listener(*_: Any) -> None:
+            from homeassistant.components import onboarding  # noqa: PLC0415
+
+            @callback
+            def _stop_legacy_redirect() -> None:
+                self.hass.async_create_task(self._stop_legacy_redirect())
+
+            onboarding.async_add_listener(self.hass, _stop_legacy_redirect)
+
+        async_when_setup_or_start(
+            self.hass, "onboarding", _register_onboarding_listener
+        )
+
+    async def _stop_legacy_redirect(self) -> None:
+        """Tear down the legacy port 8123 server."""
+        runner = self._legacy_redirect_runner
+        if runner is None:
+            return
+        self._legacy_redirect_runner = None
+        await runner.cleanup()
+        _LOGGER.info("Onboarding complete, stopped legacy port 8123 redirect")
+
     async def stop(self) -> None:
         """Stop the aiohttp server."""
+        await self._stop_legacy_redirect()
         if self.supervisor_site is not None:
             await self.supervisor_site.stop()
             if self.supervisor_unix_socket_path is not None:

@@ -387,8 +387,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def update_hass_api(refresh_token: RefreshToken) -> None:
         """Update Home Assistant API data on Hass.io."""
-        # hass.config.api is always set here: hassio depends on http, and the
-        # http integration assigns hass.config.api during its async_setup.
+        # hassio depends on http, which sets hass.config.api during its setup.
         assert hass.config.api is not None
         options = HomeAssistantOptions(
             ssl=hass.config.api.use_ssl,
